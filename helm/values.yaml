@@ -1,0 +1,94 @@
+image:
+  registry: docker.io
+  repository: phongleduc/inventory-api
+  tag: latest
+  pullPolicy: Always
+
+replicaCount: 1
+
+# Thêm các tùy chỉnh tên
+nameOverride: "dotnet-core-api"
+fullnameOverride: "inventory-api-service"
+
+imagePullSecrets:
+  - name: regcred
+
+hostNetwork: true
+dnsPolicy: ClusterFirstWithHostNet
+
+service:
+  type: ClusterIP
+  port: 8082
+  targetPort: 8080
+  name: inventory-api-service
+
+# Tên deployment tùy chỉnh
+deployment:
+  name: inventory-api-deployment
+
+# Tên ingress tùy chỉnh
+ingress:
+  enabled: true
+  name: inventory-api-ingress
+  ingressClassName: nginx
+  hostname: inventory-api.cuder.xyz
+  path: /
+  pathType: Prefix
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/ssl-redirect: "false"
+    # Thêm annotation để xử lý path của Swagger UI
+    nginx.ingress.kubernetes.io/rewrite-target: /$2
+  tls: true
+  extraTls:
+    - hosts:
+        - inventory-api.cuder.xyz
+      secretName: inventory-api-tls
+
+containerPorts:
+  http: 8082
+
+# Môi trường từ Secret
+extraEnvVarsFromSecret:
+  - secretName: inventory-api-secret
+    name: ConnectionStrings__DefaultConnection
+    envVar: ConnectionStrings__DefaultConnection
+
+  - secretName: shared-secret
+    name: RabbitMq__UserName
+    envVar: RabbitMq__UserName
+
+  - secretName: shared-secret
+    name: RabbitMq__Password
+    envVar: RabbitMq__Password
+
+# Môi trường từ ConfigMap
+extraEnvVarsFromConfigMap:
+  - configMapName: shared-config
+    name: RabbitMq__Host
+    envVar: RabbitMq__Host
+
+  - configMapName: shared-config
+    name: RabbitMq__Port
+    envVar: RabbitMq__Port
+
+  - configMapName: shared-config
+    name: Logging__LogLevel__Default
+    envVar: Logging__LogLevel__Default
+
+  - configMapName: shared-config
+    name: Logging__LogLevel__Microsoft.AspNetCore
+    envVar: Logging__LogLevel__Microsoft.AspNetCore
+
+# Biến môi trường cố định
+extraEnvVars:
+  - name: ASPNETCORE_ENVIRONMENT
+    value: "Production"
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi

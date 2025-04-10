@@ -1,0 +1,80 @@
+name: Build and Deploy Inventory API
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: 8.0
+
+      - name: Build and test
+        run: |
+          dotnet build
+          dotnet test
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/inventory-api:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/inventory-api:latest
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Install cloudflared
+        run: |
+          curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 -o cloudflared
+          chmod +x cloudflared
+          sudo mv cloudflared /usr/local/bin/
+
+      - name: Setup SSH key
+        run: |
+          mkdir -p /tmp/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > /tmp/.ssh/id_rsa
+          chmod 600 /tmp/.ssh/id_rsa
+
+      - name: Configure SSH with ProxyCommand
+        run: |
+          mkdir -p ~/.ssh
+          echo "Host ssh.cuder.xyz
+            User phongle
+            ProxyCommand cloudflared access ssh --hostname %h
+            IdentityFile /tmp/.ssh/id_rsa
+            StrictHostKeyChecking no
+          " > ~/.ssh/config
+          chmod 600 ~/.ssh/config
+
+      - name: Copy values.yaml to server
+        run: |
+          scp ./helm/values.yaml ssh.cuder.xyz:/tmp/inventory-api-values.yaml
+
+      - name: Apply Kubernetes deployment
+        run: |
+          ssh ssh.cuder.xyz "helm upgrade --install inventory-api devops-charts/dotnet-core-api \
+                             --namespace devops --create-namespace \
+                             -f /tmp/inventory-api-values.yaml \
+                             --set image.repository=${{ secrets.DOCKER_USERNAME }}/inventory-api \
+                             --set image.tag=latest"
