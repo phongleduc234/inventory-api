@@ -1,8 +1,8 @@
+using InventoryApi.Consumers;
 using InventoryApi.Data;
 using MassTransit;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
-using PaymentApi.Shared;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,32 +18,64 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// Bind RabbitMQ configuration
-var rabbitMqOptions = builder.Configuration.GetSection("RabbitMq").Get<RabbitMqOptions>();
 builder.Services.AddMassTransit(x =>
 {
     x.AddConsumer<InventoryConsumer>();
 
     x.UsingRabbitMq((context, cfg) =>
     {
-        cfg.Host(new Uri($"rabbitmq://{rabbitMqOptions.Host}:{rabbitMqOptions.Port}/"), h =>
+        var rabbitConfig = builder.Configuration.GetSection("RabbitMq");
+        var host = rabbitConfig["Host"] ?? "localhost";
+        var port = rabbitConfig.GetValue<int>("Port", 5672);
+        var username = rabbitConfig["UserName"] ?? "guest";
+        var password = rabbitConfig["Password"] ?? "guest";
+
+        cfg.Host(new Uri($"rabbitmq://{host}:{port}"), h =>
         {
-            h.Username(rabbitMqOptions.UserName ?? "admin");
-            h.Password(rabbitMqOptions.Password ?? "123456");
+            h.Username(username);
+            h.Password(password);
         });
 
-        // Cấu hình queue cho UpdateInventory và CompensateInventory
+        // Thêm cấu hình retry toàn cục
+        cfg.UseDelayedRedelivery(r => r.Intervals(
+            TimeSpan.FromMinutes(1),
+            TimeSpan.FromMinutes(5),
+            TimeSpan.FromMinutes(15)
+        ));
+        cfg.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
+
+        // Cấu hình queue cho UpdateInventory
         cfg.ReceiveEndpoint("update-inventory", e =>
         {
             e.ConfigureConsumer<InventoryConsumer>(context);
             e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
-            e.BindDeadLetterQueue("inventory-dlq", "inventory-dlx");
+            e.BindDeadLetterQueue("inventory-dlq", "inventory-dlx",
+                dlq => dlq.Durable = true);
         });
 
+        // Cập nhật cấu hình cho CompensateInventory
         cfg.ReceiveEndpoint("compensate-inventory", e =>
         {
             e.ConfigureConsumer<InventoryConsumer>(context);
             e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
+            // Thêm DLQ
+            e.BindDeadLetterQueue("compensate-inventory-dlq", "compensate-inventory-dlx",
+                dlq => dlq.Durable = true);
+        });
+
+        // Thêm endpoint xử lý dead letter messages nếu cần
+        cfg.ReceiveEndpoint("inventory-dead-letter-queue", e =>
+        {
+            e.Handler<object>(async context =>
+            {
+                var logger = context.GetPayload<ILogger<object>>();
+                logger.LogError("Dead-lettered inventory message received: {MessageId}", context.MessageId);
+                // Thêm xử lý
+            });
+
+            // Bind các dead letter queues
+            e.Bind("inventory-dlq");
+            e.Bind("compensate-inventory-dlq");
         });
     });
 });

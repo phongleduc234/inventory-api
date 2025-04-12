@@ -8,7 +8,7 @@ namespace InventoryApi.Data
         {
         }
 
-        // Define your DbSets here
+        public DbSet<InventoryReservation> InventoryReservations { get; set; }
         public DbSet<InventoryItem> InventoryItems { get; set; }
         public DbSet<OutboxMessage> OutboxMessages { get; set; }
 
@@ -18,13 +18,18 @@ namespace InventoryApi.Data
             {
                 b.HasIndex(p => p.ProductId).IsUnique();
             });
+            modelBuilder.Entity<InventoryReservation>(b =>
+            {
+                b.HasIndex(p => p.OrderId).IsUnique();
+            });
             modelBuilder.Entity<OutboxMessage>(b =>
             {
                 b.HasKey(x => x.Id);
                 b.Property(x => x.EventType).HasMaxLength(100);
             });
 
-            modelBuilder.Entity<InventoryItem>().ToTable("Payments");
+            modelBuilder.Entity<InventoryItem>().ToTable("InventoryItems");
+            modelBuilder.Entity<InventoryReservation>().ToTable("InventoryReservations");
             modelBuilder.Entity<OutboxMessage>().ToTable("OutboxMessages");
         }
     }
@@ -33,11 +38,19 @@ namespace InventoryApi.Data
     {
         public Guid Id { get; set; } = Guid.NewGuid();
         public string ProductId { get; set; }
-        public int Quantity { get; set; }
+        public int AvailableQuantity { get; set; }
         public int ReservedQuantity { get; set; } // Số lượng đã đặt hàng
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     }
 
+    public class InventoryReservation
+    {
+        public Guid Id { get; set; }
+        public Guid OrderId { get; set; }
+        public string ProductId { get; set; }
+        public int Quantity { get; set; }
+        public DateTime CreatedAt { get; set; }
+    }
 
     public class OutboxMessage
     {
@@ -46,5 +59,7 @@ namespace InventoryApi.Data
         public string EventData { get; set; }
         public DateTime CreatedAt { get; set; }
         public bool Processed { get; set; }
+        public int RetryCount { get; set; }
+        public DateTime? ProcessedAt { get; set; }
     }
 }

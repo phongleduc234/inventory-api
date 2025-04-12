@@ -2,7 +2,7 @@ using InventoryApi.Data;
 using MassTransit;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using PaymentApi.Shared;
+using SharedContracts.Events;
 
 namespace InventoryApi.Controllers
 {
@@ -30,20 +30,25 @@ namespace InventoryApi.Controllers
             using var transaction = await _context.Database.BeginTransactionAsync();
             try
             {
+                // Chuyển đổi từ CorrelationId sang Guid để đảm bảo tính nhất quán
+                var correlationId = request.CorrelationId;
                 var item = await _context.InventoryItems
                     .FirstOrDefaultAsync(i => i.ProductId == request.ProductId);
 
                 if (item == null)
                 {
                     _logger.LogError($"Product {request.ProductId} not found");
+                    // Sử dụng đúng constructor với CorrelationId, OrderId, Success
+                    await _bus.Publish(new InventoryUpdated(correlationId, request.OrderId, false));
                     return NotFound();
                 }
 
                 // Kiểm tra số lượng tồn kho
-                if (item.Quantity - item.ReservedQuantity < request.Quantity)
+                if (item.AvailableQuantity - item.ReservedQuantity < request.Quantity)
                 {
                     _logger.LogError("Insufficient inventory");
-                    await _bus.Publish(new InventoryUpdated(request.CorrelationId, false));
+                    // Sử dụng đúng constructor với CorrelationId, OrderId, Success
+                    await _bus.Publish(new InventoryUpdated(correlationId, request.OrderId, false));
                     return BadRequest("Insufficient inventory");
                 }
 
@@ -51,8 +56,8 @@ namespace InventoryApi.Controllers
                 item.ReservedQuantity += request.Quantity;
                 await _context.SaveChangesAsync();
 
-                // Publish event thành công
-                await _bus.Publish(new InventoryUpdated(request.CorrelationId, true));
+                // Publish event thành công - sử dụng đúng constructor
+                await _bus.Publish(new InventoryUpdated(correlationId, request.OrderId, true));
                 await transaction.CommitAsync();
 
                 return Ok(item);
@@ -61,15 +66,11 @@ namespace InventoryApi.Controllers
             {
                 await transaction.RollbackAsync();
                 _logger.LogError(ex, "Inventory update failed");
-                await _bus.Publish(new InventoryUpdated(request.CorrelationId, false));
+
+                await _bus.Publish(new InventoryUpdated(request.CorrelationId, request.OrderId, false));
                 return StatusCode(500, "Internal server error");
             }
         }
     }
-
-    public record UpdateInventoryRequest(
-        Guid CorrelationId,
-        string ProductId,
-        int Quantity
-    );
+    public record UpdateInventoryRequest(Guid CorrelationId, Guid OrderId, string ProductId, int Quantity);
 }
