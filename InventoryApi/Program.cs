@@ -119,12 +119,15 @@ builder.Services.AddMassTransit(x =>
         {
             e.ConfigureConsumer<InventoryConsumer>(context);
             e.UseMessageRetry(r => r.Interval(3, TimeSpan.FromSeconds(5)));
-            // Thêm DLQ
+            // Thêm DLQ với cấu hình đúng
             e.BindDeadLetterQueue("compensate-inventory-dlq", "compensate-inventory-dlx",
-                dlq => dlq.Durable = true);
+                dlq => {
+                    dlq.Durable = true;
+                    dlq.AutoDelete = false;
+                });
         });
 
-        // Thêm endpoint xử lý dead letter messages nếu cần
+        // Thêm endpoint xử lý dead letter messages
         cfg.ReceiveEndpoint("inventory-dead-letter-queue", e =>
         {
             e.Handler<DeadLetterMessage>(async context =>
