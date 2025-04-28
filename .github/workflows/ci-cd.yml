@@ -8,6 +8,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.set_tag.outputs.image_tag }}
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
@@ -19,10 +21,29 @@ jobs:
         with:
           dotnet-version: 8.0
 
+      - name: Add private NuGet source
+        run: |
+          dotnet nuget add source "${{ secrets.BAGET_URL }}" \
+            --name DevOpsNuGet \
+            --username user \
+            --password "${{ secrets.BAGET_API_KEY }}" \
+            --store-password-in-clear-text
+
+      - name: Clean solution
+        run: dotnet clean
+
+      - name: Restore dependencies
+        run: dotnet restore -v d
+
       - name: Build and test
         run: |
-          dotnet build
-          dotnet test
+          dotnet build --no-restore
+          dotnet test --no-restore
+
+      - name: Set image tag
+        id: set_tag
+        run: |
+          echo "image_tag=${GITHUB_SHA}" >> $GITHUB_OUTPUT
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -31,9 +52,14 @@ jobs:
           password: ${{ secrets.DOCKER_TOKEN }}
 
       - name: Build and push Docker image
+        env:
+          RELEASE: inventory-api
         run: |
-          docker build -t ${{ secrets.DOCKER_USERNAME }}/inventory-api:latest .
-          docker push ${{ secrets.DOCKER_USERNAME }}/inventory-api:latest
+          docker build \
+            --build-arg BAGET_URL=${{ secrets.BAGET_URL }} \
+            --build-arg BAGET_API_KEY=${{ secrets.BAGET_API_KEY }} \
+            -t ${{ secrets.DOCKER_USERNAME }}/$RELEASE:${{ steps.set_tag.outputs.image_tag }} .
+          docker push ${{ secrets.DOCKER_USERNAME }}/$RELEASE:${{ steps.set_tag.outputs.image_tag }}
 
   deploy:
     needs: build
@@ -68,13 +94,40 @@ jobs:
           chmod 600 ~/.ssh/config
 
       - name: Copy values.yaml to server
+        env:
+          RELEASE: inventory-api
         run: |
-          scp ./helm/values.yaml ssh.cuder.xyz:/tmp/inventory-api-values.yaml
+          scp ./helm/values.yaml ssh.cuder.xyz:/tmp/$RELEASE-values.yaml
 
       - name: Apply Kubernetes deployment
         run: |
-          ssh ssh.cuder.xyz "helm upgrade --install inventory-api devops-charts/dotnet-core-api \
-                             --namespace devops --create-namespace \
-                             -f /tmp/inventory-api-values.yaml \
-                             --set image.repository=${{ secrets.DOCKER_USERNAME }}/inventory-api \
-                             --set image.tag=latest"
+          ssh ssh.cuder.xyz "
+            set -e
+
+            RELEASE=inventory-api
+            NAMESPACE=devops
+
+            if helm ls -n \$NAMESPACE | grep -q \$RELEASE; then
+              echo 'Force deleting stuck pods...'
+              kubectl get pods -n \$NAMESPACE -o json | jq -r '.items[] | select(.metadata.deletionTimestamp != null) | .metadata.name' | while read pod; do
+                echo Deleting stuck pod: \$pod
+                kubectl delete pod \$pod -n \$NAMESPACE --grace-period=0 --force
+              done
+
+              echo 'Uninstalling existing Helm release...'
+              helm uninstall \$RELEASE -n \$NAMESPACE
+
+              echo 'Waiting for old pods to terminate...'
+              while kubectl get pods -n \$NAMESPACE | grep \$RELEASE; do
+                sleep 3
+              done
+            fi
+
+            echo 'Installing Helm chart...'
+            helm upgrade --install \$RELEASE devops-charts/dotnet-core-api \
+              --namespace \$NAMESPACE --create-namespace \
+              -f /tmp/\$RELEASE-values.yaml \
+              --set image.repository=${{ secrets.DOCKER_USERNAME }}/\$RELEASE \
+              --set image.tag=${{ needs.build.outputs.image_tag }} \
+              --set image.pullPolicy=Always
+          "

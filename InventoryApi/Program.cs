@@ -3,8 +3,19 @@ using InventoryApi.Data;
 using MassTransit;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.OpenApi.Models;
+using SharedContracts.Models;
+using StackExchange.Redis;
+using System.Reflection;
+
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Configuration
+    .SetBasePath(AppContext.BaseDirectory)
+    .AddJsonFile("appsettings.json", optional: false, reloadOnChange: true)
+    .AddJsonFile($"appsettings.{builder.Environment.EnvironmentName}.json", optional: false, reloadOnChange: true)
+    .AddEnvironmentVariables();
 
 // Configure Entity Framework and PostgreSQL
 builder.Services.AddDbContext<InventoryDbContext>(options =>
@@ -16,7 +27,57 @@ builder.Services.AddHttpClient();
 builder.Services.AddControllers();
 // Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
 builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
+builder.Services.AddSwaggerGen(options =>
+{
+    options.SwaggerDoc("v1", new OpenApiInfo
+    {
+        Title = "Inventory API",
+        Version = "v1",
+        Description = "API for inventory management with Outbox Pattern and DLQ support",
+        Contact = new OpenApiContact
+        {
+            Name = "Development Team",
+            Email = "jun8124@gmail.com"
+        }
+    });
+
+    // Add XML comments support
+    var xmlFile = $"{Assembly.GetExecutingAssembly().GetName().Name}.xml";
+    var xmlPath = Path.Combine(AppContext.BaseDirectory, xmlFile);
+    if (File.Exists(xmlPath))
+    {
+        options.IncludeXmlComments(xmlPath);
+    }
+
+    // Group endpoints by controller
+    options.TagActionsBy(api => new[] { api.GroupName ?? api.ActionDescriptor.RouteValues["controller"] });
+});
+
+// Add Redis connection
+builder.Services.AddSingleton(sp =>
+{
+    var redisConfig = builder.Configuration.GetSection("Redis");
+    var host = redisConfig["Host"] ?? "localhost";
+    var port = redisConfig["Port"] ?? "6379";
+    var password = redisConfig["Password"] ?? "";
+
+    var configOptions = new ConfigurationOptions
+    {
+        AbortOnConnectFail = false,
+        ConnectRetry = 3, // Tăng số lần thử lại khi kết nối thất bại
+        ConnectTimeout = 10000, // Tăng timeout kết nối lên 10 giây
+        SyncTimeout = 10000, // Tăng timeout cho các lệnh đồng bộ lên 10 giây
+        AsyncTimeout = 10000 // Tăng timeout cho các lệnh bất đồng bộ lên 10 giây
+    };
+
+    configOptions.EndPoints.Add($"{host}:{port}");
+
+    if (!string.IsNullOrEmpty(password))
+    {
+        configOptions.Password = password;
+    }
+    return ConnectionMultiplexer.Connect(configOptions);
+});
 
 builder.Services.AddMassTransit(x =>
 {
@@ -66,10 +127,10 @@ builder.Services.AddMassTransit(x =>
         // Thêm endpoint xử lý dead letter messages nếu cần
         cfg.ReceiveEndpoint("inventory-dead-letter-queue", e =>
         {
-            e.Handler<object>(async context =>
+            e.Handler<DeadLetterMessage>(async context =>
             {
-                var logger = context.GetPayload<ILogger<object>>();
-                logger.LogError("Dead-lettered inventory message received: {MessageId}", context.MessageId);
+                var logger = context.GetPayload<ILogger<DeadLetterMessage>>();
+                logger.LogError("Dead-lettered inventory message received: {MessageId}", context.Message.MessageId);
                 // Thêm xử lý
             });
 

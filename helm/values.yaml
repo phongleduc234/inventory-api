@@ -7,24 +7,23 @@ image:
 replicaCount: 1
 
 # Thêm các tùy chỉnh tên
-nameOverride: "dotnet-core-api"
-fullnameOverride: "inventory-api-service"
+nameOverride: "inventory-api"
 
 imagePullSecrets:
   - name: regcred
 
-hostNetwork: true
-dnsPolicy: ClusterFirstWithHostNet
-
 service:
   type: ClusterIP
-  port: 8082
+  port: 8080
   targetPort: 8080
-  name: inventory-api-service
+  name: inventory-api-service 
 
 # Tên deployment tùy chỉnh
 deployment:
   name: inventory-api-deployment
+
+# Annotations để force redeploy
+podAnnotations: {}
 
 # Tên ingress tùy chỉnh
 ingress:
@@ -46,13 +45,89 @@ ingress:
       secretName: inventory-api-tls
 
 containerPorts:
-  http: 8082
+  http: 8080
 
 # Môi trường từ Secret
 extraEnvVarsFromSecret:
   - secretName: inventory-api-secret
     name: ConnectionStrings__DefaultConnection
     envVar: ConnectionStrings__DefaultConnection
+    
+  - secretName: shared-secret
+    name: SmtpMail__UserName
+    envVar: SmtpMail__UserName
+
+  - secretName: shared-secret
+    name: SmtpMail__Password
+    envVar: SmtpMail__Password
+    
+  - secretName: shared-secret
+    name: SmtpMail__Host
+    envVar: SmtpMail__Host
+
+  - secretName: shared-secret
+    name: SmtpMail__Port
+    envVar: SmtpMail__Port
+
+  - secretName: shared-secret
+    name: SmtpMail__FromEmail
+    envVar: SmtpMail__FromEmail
+
+  - secretName: shared-secret
+    name: SmtpMail__FromName
+    envVar: SmtpMail__FromName
+
+  - secretName: shared-secret
+    name: SmtpMail__SenderEmail
+    envVar: SmtpMail__SenderEmail
+
+  - secretName: shared-secret
+    name: SmtpMail__AdminEmail
+    envVar: SmtpMail__AdminEmail
+
+  - secretName: shared-secret
+    name: SmtpMail__AdminCcEmail
+    envVar: SmtpMail__AdminCcEmail
+
+  - secretName: shared-secret
+    name: SmtpMail__AdminBccEmail
+    envVar: SmtpMail__AdminBccEmail
+
+  - secretName: shared-secret
+    name: Telegram__BotToken
+    envVar: Telegram__BotToken
+
+  - secretName: shared-secret
+    name: Telegram__ChatId
+    envVar: Telegram__ChatId
+
+  - secretName: shared-secret
+    name: Telegram__AutoSetWebhook
+    envVar: Telegram__AutoSetWebhook
+
+  - secretName: shared-secret
+    name: Telegram__WebhookBaseUrl
+    envVar: Telegram__WebhookBaseUrl
+
+  - secretName: shared-secret
+    name: Redis__Host
+    envVar: Redis__Host
+
+  - secretName: shared-secret
+    name: Redis__Port
+    envVar: Redis__Port
+
+  - secretName: shared-secret
+    name: Redis__Password
+    envVar: Redis__Password
+
+  - secretName: shared-secret
+    name: RabbitMq__Host
+    envVar: RabbitMq__Host
+
+  - secretName: shared-secret
+    name: RabbitMq__Port
+    envVar: RabbitMq__Port
 
   - secretName: shared-secret
     name: RabbitMq__UserName
@@ -65,20 +140,16 @@ extraEnvVarsFromSecret:
 # Môi trường từ ConfigMap
 extraEnvVarsFromConfigMap:
   - configMapName: shared-config
-    name: RabbitMq__Host
-    envVar: RabbitMq__Host
-
-  - configMapName: shared-config
-    name: RabbitMq__Port
-    envVar: RabbitMq__Port
-
-  - configMapName: shared-config
     name: Logging__LogLevel__Default
     envVar: Logging__LogLevel__Default
 
   - configMapName: shared-config
     name: Logging__LogLevel__Microsoft.AspNetCore
     envVar: Logging__LogLevel__Microsoft.AspNetCore
+
+  - configMapName: shared-config
+    name: Alerting__AlertThreshold
+    envVar: Alerting__AlertThreshold
 
 # Biến môi trường cố định
 extraEnvVars:
