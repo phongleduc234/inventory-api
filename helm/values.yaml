@@ -36,8 +36,6 @@ ingress:
   annotations:
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
     nginx.ingress.kubernetes.io/ssl-redirect: "false"
-    # Thêm annotation để xử lý path của Swagger UI
-    nginx.ingress.kubernetes.io/rewrite-target: /$2
   tls: true
   extraTls:
     - hosts:
